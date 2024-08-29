@@ -150,54 +150,72 @@ class External_Links_Manager {
         }
     }
 
+
     private function extract_title($html, $url) {
         // Create a DOM object
         $dom = new simple_html_dom();
         $dom->load($html);
 
+        $title = null;
+
         // Try extracting from Open Graph meta tag
         if ($og_title = $dom->find('meta[property="og:title"]', 0)) {
-            return $og_title->content;
+            $title = $og_title->content;
         }
         
-        // Try standard title tag
-        if ($title_tag = $dom->find('title', 0)) {
-            return $title_tag->plaintext;
+        // Try standard title tag if og:title not found
+        if (!$title && ($title_tag = $dom->find('title', 0))) {
+            $title = $title_tag->plaintext;
         }
 
-        // Try h1 tags
-        if ($h1_tag = $dom->find('h1', 0)) {
-            return $h1_tag->plaintext;
+        // Try h1 tags if title still not found
+        if (!$title && ($h1_tag = $dom->find('h1', 0))) {
+            $title = $h1_tag->plaintext;
         }
 
-        // Fallback to existing URL parsing logic
-        $path = parse_url($url, PHP_URL_PATH);
-        $path_parts = explode('/', trim($path, '/'));
-        $last_part = end($path_parts);
-        return ucwords(str_replace('-', ' ', $last_part));
+        // Fallback to existing URL parsing logic if still no title
+        if (!$title) {
+            $path = parse_url($url, PHP_URL_PATH);
+            $path_parts = explode('/', trim($path, '/'));
+            $title = ucwords(str_replace('-', ' ', end($path_parts)));
+        }
+
+        // Decode HTML entities and convert to UTF-8
+        $title = html_entity_decode($title, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+
+        // Remove any remaining HTML tags
+        $title = strip_tags($title);
+
+        return $title;
     }
 
     private function extract_date($html, $url) {
-        // Try to extract from schema.org metadata
-        if (preg_match('/"datePublished":\s*"([^"]+)"/i', $html, $matches)) {
-            return date('Y-m-d', strtotime($matches[1]));
-        }
-
-        // Try to extract from Open Graph meta tag
-        if (preg_match('/<meta property="article:published_time" content="([^"]+)"/i', $html, $matches)) {
-            return date('Y-m-d', strtotime($matches[1]));
-        }
-
-        // Try to extract from other common meta tags
         $patterns = array(
-            '/<meta name="date" content="([^"]+)"/i',
-            '/<time datetime="([^"]+)"/i',
-            '/\d{4}[-\/]\d{2}[-\/]\d{2}/',  // Generic date pattern
+            // ISO 8601 date format
+            '/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/',
+            // schema.org datePublished format
+            '/"datePublished"\s*:\s*"([^"]+)"/',
+            // Open Graph article publish time
+            '/<meta property="article:published_time" content="([^"]+)"/',
+            // Various date meta tags
+            '/<meta name="date" content="([^"]+)"/',
+            '/<meta name="pubdate" content="([^"]+)"/',
+            // HTML5 time element
+            '/<time datetime="([^"]+)"/',
+            // Facebook and YouTube style dates (e.g., "May 29, 2023")
+            '/(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},\s+\d{4}/',
+            // Generic date patterns
+            '/\d{4}[-\/]\d{2}[-\/]\d{2}/',
+            '/\d{2}[-\/]\d{2}[-\/]\d{4}/',
         );
 
         foreach ($patterns as $pattern) {
             if (preg_match($pattern, $html, $matches)) {
-                return date('Y-m-d', strtotime($matches[1]));
+                $extracted_date = end($matches);
+                $parsed_date = strtotime($extracted_date);
+                if ($parsed_date) {
+                    return date('Y-m-d', $parsed_date);
+                }
             }
         }
 
